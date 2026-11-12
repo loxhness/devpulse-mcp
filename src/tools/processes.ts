@@ -162,6 +162,51 @@ const viaFindProcess: Lookup = async (port) => {
   return { pid: results[0].pid, name: results[0].name };
 };
 
+// ---------- Windows: netstat + tasklist ----------
+
+/**
+ * Pid of the TCP listener on `port` from `netstat -ano` output, or null.
+ * Listening sockets are recognised by a zero foreign address ("0.0.0.0:0",
+ * "[::]:0") rather than the State column, which Windows localizes.
+ */
+export function parseNetstatListener(output: string, port: number): number | null {
+  for (const line of output.split(/\r?\n/)) {
+    const cols = line.trim().split(/\s+/);
+    if (cols.length < 5 || cols[0].toUpperCase() !== "TCP") continue;
+    const [, local, foreign] = cols;
+    if (!local.endsWith(`:${port}`) || !/:0$/.test(foreign)) continue;
+    const pid = Number(cols[cols.length - 1]);
+    if (Number.isInteger(pid) && pid > 0) return pid;
+  }
+  return null;
+}
+
+/** Image name from `tasklist /FO CSV /NH` output, e.g. "node.exe". */
+export function parseTasklistName(output: string): string | null {
+  return output.trim().match(/^"([^"]+)"/)?.[1] ?? null;
+}
+
+/**
+ * find-process resolves names on Windows by listing every process through
+ * PowerShell (several seconds on CI runners and slow machines) and turns
+ * netstat failures into "nothing listening". netstat + tasklist is fast and
+ * lets a failure surface as "couldn't check".
+ */
+const viaNetstat: Lookup = async (port) => {
+  const { stdout, code } = await runWithStatus("netstat", ["-ano", "-p", "TCP"], { timeoutMs: 5000 });
+  if (code !== 0) throw new Unavailable("netstat failed");
+  // -p TCP lists IPv4 only; check IPv6 too when nothing matched.
+  let pid = parseNetstatListener(stdout, port);
+  if (pid === null) {
+    const v6 = await runWithStatus("netstat", ["-ano", "-p", "TCPv6"], { timeoutMs: 5000 });
+    if (v6.code === 0) pid = parseNetstatListener(v6.stdout, port);
+  }
+  if (pid === null) return null;
+  const tasklist = await runWithStatus("tasklist", ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"]);
+  const name = tasklist.code === 0 ? parseTasklistName(tasklist.stdout) : null;
+  return { pid, name: name ?? "unknown" };
+};
+
 /**
  * find-process returns [] (not an error) when its underlying tool is missing,
  * so it can't distinguish "nothing listening" from "can't check". Only trust
@@ -170,7 +215,7 @@ const viaFindProcess: Lookup = async (port) => {
 function lookupChain(): Array<[string, Lookup]> {
   switch (process.platform) {
     case "win32":
-      return [["netstat", viaFindProcess]];
+      return [["netstat", viaNetstat], ["find-process", viaFindProcess]];
     case "darwin":
       return [["lsof", viaLsof], ["find-process", viaFindProcess]];
     default:

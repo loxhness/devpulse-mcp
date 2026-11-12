@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { getRunningServices, processStartTime, settleDefaultPorts, type Lookup } from "../src/tools/processes.js";
+import {
+  getRunningServices,
+  parseNetstatListener,
+  parseTasklistName,
+  processStartTime,
+  settleDefaultPorts,
+  type Lookup,
+} from "../src/tools/processes.js";
 import { makeProject, startListener } from "./helpers.js";
 
 const canCheckOwnership = process.platform === "linux" || process.platform === "darwin";
@@ -85,6 +92,42 @@ describe("getRunningServices per-port fallback (unchecked_ports)", () => {
     expect(result.detection_available).toBe(false);
     expect(result.unchecked_ports).toEqual([3000, 8080]);
     expect(result.expected_but_missing).toEqual([]);
+  });
+});
+
+describe("Windows netstat / tasklist parsing", () => {
+  const netstat = [
+    "",
+    "Active Connections",
+    "",
+    "  Proto  Local Address          Foreign Address        State           PID",
+    "  TCP    0.0.0.0:135            0.0.0.0:0              LISTENING       1052",
+    "  TCP    127.0.0.1:3000         127.0.0.1:52144        ESTABLISHED     4242",
+    "  TCP    127.0.0.1:52144        127.0.0.1:3000         ESTABLISHED     5151",
+    "  TCP    127.0.0.1:3000         0.0.0.0:0              LISTENING       4242",
+    "  TCP    127.0.0.1:30000        0.0.0.0:0              ABHÖREN         777",
+    "  TCP    [::]:5173              [::]:0                 LISTENING       888",
+    "  UDP    0.0.0.0:5353           *:*                                    999",
+  ].join("\r\n");
+
+  it("finds the listening pid for a port, IPv4 and IPv6", () => {
+    expect(parseNetstatListener(netstat, 3000)).toBe(4242);
+    expect(parseNetstatListener(netstat, 5173)).toBe(888);
+  });
+
+  it("does not depend on the localized state column", () => {
+    expect(parseNetstatListener(netstat, 30000)).toBe(777);
+  });
+
+  it("ignores connections, prefix matches and UDP", () => {
+    expect(parseNetstatListener(netstat, 52144)).toBeNull();
+    expect(parseNetstatListener(netstat, 300)).toBeNull();
+    expect(parseNetstatListener(netstat, 5353)).toBeNull();
+  });
+
+  it("reads the image name from tasklist CSV output", () => {
+    expect(parseTasklistName('"node.exe","4242","Console","1","45,000 K"')).toBe("node.exe");
+    expect(parseTasklistName("INFO: No tasks are running which match the specified criteria.")).toBeNull();
   });
 });
 
