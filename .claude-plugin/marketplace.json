@@ -1,0 +1,15 @@
+{
+  "name": "devpulse",
+  "description": "devpulse: dev environment diagnostics for Claude Code",
+  "owner": {
+    "name": "Uzair Suboor",
+    "url": "https://github.com/loxhness"
+  },
+  "plugins": [
+    {
+      "name": "devpulse",
+      "source": "./plugin",
+      "description": "Lets Claude see what's wrong with your dev environment in one call: crashed or conflicting dev servers, log errors, git state and runtime versions."
+    }
+  ]
+}

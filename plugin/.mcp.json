@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "devpulse": {
+      "command": "npx",
+      "args": ["-y", "devpulse-mcp@latest"]
+    }
+  }
+}

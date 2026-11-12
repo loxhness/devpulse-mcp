@@ -1,0 +1,14 @@
+{
+  "name": "devpulse",
+  "displayName": "devpulse",
+  "version": "0.1.3",
+  "description": "Lets Claude see what's wrong with your dev environment in one call: crashed or conflicting dev servers, log errors, git state and runtime versions.",
+  "author": {
+    "name": "Uzair Suboor",
+    "url": "https://github.com/loxhness"
+  },
+  "homepage": "https://github.com/loxhness/devpulse-mcp",
+  "repository": "https://github.com/loxhness/devpulse-mcp",
+  "license": "MIT",
+  "keywords": ["mcp", "diagnostics", "debugging", "dev-server", "logs", "devtools"]
+}

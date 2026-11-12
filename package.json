@@ -1,11 +1,31 @@
 {
   "name": "devpulse-mcp",
   "mcpName": "io.github.loxhness/devpulse-mcp",
-  "version": "0.1.2",
-  "description": "Zero-config MCP server that gives AI coding assistants a real-time diagnostic snapshot of your local dev environment — framework, running services, recent errors, git state, and health diagnosis in one call",
+  "version": "0.1.3",
+  "description": "Zero-config MCP server that tells your AI coding assistant what's wrong with your local dev environment in one call: crashed or conflicting dev servers, log errors, git state and runtime versions",
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "claude",
+    "claude-code",
+    "cursor",
+    "windsurf",
+    "ai-coding",
+    "devtools",
+    "developer-tools",
+    "diagnostics",
+    "debugging",
+    "dev-server",
+    "port-conflict",
+    "eaddrinuse",
+    "logs"
+  ],
+  "author": "Uzair Suboor (https://github.com/loxhness)",
   "type": "module",
   "bin": {
-    "devpulse": "dist/index.js"
+    "devpulse": "dist/index.js",
+    "devpulse-mcp": "dist/index.js"
   },
   "main": "./dist/index.js",
   "repository": {
@@ -17,7 +37,9 @@
     "url": "https://github.com/loxhness/devpulse-mcp/issues"
   },
   "files": [
-    "dist"
+    "dist",
+    "!dist/**/*.map",
+    "!dist/**/*.d.ts"
   ],
   "scripts": {
     "build": "tsc",
@@ -26,10 +48,12 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
+    "build:mcpb": "npm run build && node scripts/build-mcpb.mjs",
+    "version": "node scripts/sync-version.mjs && git add server.json manifest.json plugin/.claude-plugin/plugin.json",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "find-process": "^1.4.7",
     "simple-git": "^3.27.0",
     "zod": "^3.23.8"

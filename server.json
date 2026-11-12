@@ -1,20 +1,31 @@
 {
-    "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-    "name": "io.github.loxhness/devpulse-mcp",
-    "description": "Zero-config MCP server for AI coding assistants. Diagnoses your dev environment in one call.",
-    "repository": {
-      "url": "https://github.com/loxhness/devpulse-mcp",
-      "source": "github"
-    },
-    "version": "0.1.2",
-    "packages": [
-      {
-        "registryType": "npm",
-        "identifier": "devpulse-mcp",
-        "version": "0.1.2",
-        "transport": {
-          "type": "stdio"
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.loxhness/devpulse-mcp",
+  "title": "devpulse",
+  "description": "Tells your AI coding assistant what's wrong with your local dev environment in one call.",
+  "repository": {
+    "url": "https://github.com/loxhness/devpulse-mcp",
+    "source": "github"
+  },
+  "websiteUrl": "https://github.com/loxhness/devpulse-mcp",
+  "version": "0.1.3",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "devpulse-mcp",
+      "version": "0.1.3",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "DEVPULSE_PROJECT_DIR",
+          "description": "Default project folder to inspect when the client doesn't provide workspace roots",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "filepath"
         }
-      }
-    ]
-  }
+      ]
+    }
+  ]
+}
