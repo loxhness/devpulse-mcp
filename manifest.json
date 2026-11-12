@@ -1,0 +1,59 @@
+{
+  "manifest_version": "0.2",
+  "name": "devpulse",
+  "display_name": "devpulse",
+  "version": "0.1.3",
+  "description": "See what's wrong with your dev environment in one call: crashed or conflicting dev servers, log errors, git state and runtime versions.",
+  "long_description": "devpulse gives Claude a diagnostic snapshot of a local software project: whether the dev server is running, which process holds its port, recent errors from log files with stack traces, git state (branch, uncommitted and conflicted files) and runtime versions, plus a health verdict with a suggested fix. Everything runs locally and secrets are redacted from log output.",
+  "author": {
+    "name": "Uzair Suboor",
+    "url": "https://github.com/loxhness"
+  },
+  "homepage": "https://github.com/loxhness/devpulse-mcp",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/loxhness/devpulse-mcp"
+  },
+  "support": "https://github.com/loxhness/devpulse-mcp/issues",
+  "license": "MIT",
+  "keywords": ["developer-tools", "diagnostics", "debugging", "logs", "dev-server"],
+  "server": {
+    "type": "node",
+    "entry_point": "dist/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/dist/index.js"],
+      "env": {
+        "DEVPULSE_PROJECT_DIR": "${user_config.project_dir}"
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "get_session_snapshot",
+      "description": "Health verdict with likely cause and fix, framework, git state, dev server ports, recent log errors and runtime versions"
+    },
+    {
+      "name": "get_recent_errors",
+      "description": "ERROR and WARN entries from the project's log files, with stack traces; secrets redacted"
+    },
+    {
+      "name": "get_running_services",
+      "description": "Which dev server ports are listening, the process holding each, and whether it belongs to the project"
+    }
+  ],
+  "user_config": {
+    "project_dir": {
+      "type": "directory",
+      "title": "Default project folder",
+      "description": "The project devpulse inspects when Claude doesn't name one. You can always ask about a different folder in chat.",
+      "required": false
+    }
+  },
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": {
+      "node": ">=18.0.0"
+    }
+  }
+}

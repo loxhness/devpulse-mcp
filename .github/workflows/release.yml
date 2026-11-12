@@ -1,0 +1,97 @@
+name: Release
+
+# Cut a release with:  npm version patch   (or minor / major)
+#                      git push --follow-tags
+# That bumps package.json and server.json, tags vX.Y.Z, and this workflow
+# tests, publishes to npm and the MCP Registry, and creates a GitHub release.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write # create the GitHub release
+  id-token: write # npm provenance / trusted publishing, MCP Registry login
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      - name: Check versions match the tag
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG=$(node -p "require('./package.json').version")
+          SRV=$(node -p "require('./server.json').version")
+          SRV_PKG=$(node -p "require('./server.json').packages[0].version")
+          echo "tag=$TAG package.json=$PKG server.json=$SRV/$SRV_PKG"
+          if [ "$TAG" != "$PKG" ] || [ "$TAG" != "$SRV" ] || [ "$TAG" != "$SRV_PKG" ]; then
+            echo "::error::Tag, package.json and server.json versions must match. Use 'npm version' to bump."
+            exit 1
+          fi
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+      # Trusted publishing needs npm 11.5+. With a trusted publisher configured
+      # on npmjs.com no token is needed; otherwise set the NPM_TOKEN secret.
+      - run: npm install -g npm@latest
+
+      - name: Publish to npm
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish to the MCP Registry
+        run: |
+          OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+          ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_${OS}_${ARCH}.tar.gz" | tar xz mcp-publisher
+          ./mcp-publisher login github-oidc
+          # npm can take a moment to make a new version visible to the registry's check.
+          for attempt in 1 2 3 4 5; do
+            ./mcp-publisher publish && exit 0
+            echo "Retrying in 20s ($attempt/5)"; sleep 20
+          done
+          exit 1
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # Notes = this version's section of CHANGELOG.md
+          awk -v v="$VERSION" '
+            $0 ~ "^## \\[?" v "\\]?" { found=1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          [ -s notes.md ] || echo "See CHANGELOG.md" > notes.md
+          # One-click Claude Desktop extension, attached to the release.
+          node scripts/build-mcpb.mjs
+          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md \
+            "devpulse-${VERSION}.mcpb"
+          # Stable download link for the README: .../releases/latest/download/devpulse.mcpb
+          cp "devpulse-${VERSION}.mcpb" devpulse.mcpb
+          gh release upload "$GITHUB_REF_NAME" devpulse.mcpb
+
+      - name: Announce
+        # Each channel runs only if its secrets exist; with none set this is a no-op.
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          BLUESKY_HANDLE: ${{ secrets.BLUESKY_HANDLE }}
+          BLUESKY_APP_PASSWORD: ${{ secrets.BLUESKY_APP_PASSWORD }}
+        run: node scripts/announce.mjs notes.md

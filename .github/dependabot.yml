@@ -1,0 +1,19 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      # Keep the MCP SDK on its own so protocol updates are easy to review.
+      mcp-sdk:
+        patterns: ["@modelcontextprotocol/*"]
+      dev-dependencies:
+        dependency-type: development
+      runtime-dependencies:
+        dependency-type: production
+        exclude-patterns: ["@modelcontextprotocol/*"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

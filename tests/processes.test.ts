@@ -1,29 +1,175 @@
 import { describe, expect, it } from "vitest";
-import { getRunningServices } from "../src/tools/processes.js";
+import {
+  getRunningServices,
+  parseNetstatListener,
+  parseTasklistName,
+  processStartTime,
+  settleDefaultPorts,
+  type Lookup,
+} from "../src/tools/processes.js";
+import { makeProject, startListener } from "./helpers.js";
+
+const canCheckOwnership = process.platform === "linux" || process.platform === "darwin";
 
 describe("getRunningServices", () => {
-  it("returns empty arrays for empty expected ports", async () => {
+  it("returns empty arrays for no expected ports", async () => {
     const result = await getRunningServices([]);
-    expect(result).toEqual({
-      running: [],
-      expected_but_missing: [],
-    });
+    expect(result).toMatchObject({ running: [], expected_but_missing: [], detection_available: true });
   });
 
-  it("returns missing for an unused invalid high port", async () => {
+  it("treats invalid ports as missing", async () => {
     const result = await getRunningServices([99999]);
-    expect(result).toEqual({
-      running: [],
-      expected_but_missing: [99999],
-    });
+    expect(result.running).toEqual([]);
+    expect(result.expected_but_missing).toEqual([99999]);
   });
 
-  it("returns the expected result shape", async () => {
-    const result = await getRunningServices([99999]);
+  it("detects a process listening on a port (regression: silently missed without netstat)", async () => {
+    const dir = makeProject();
+    const { port, pid } = await startListener(dir);
+    const result = await getRunningServices([port], dir);
+    expect(result.detection_available).toBe(true);
+    expect(result.expected_but_missing).toEqual([]);
+    expect(result.running).toHaveLength(1);
+    expect(result.running[0].port).toBe(port);
+    expect(result.running[0].pid).toBe(pid);
+  });
 
-    expect(result).toHaveProperty("running");
-    expect(result).toHaveProperty("expected_but_missing");
-    expect(Array.isArray(result.running)).toBe(true);
-    expect(Array.isArray(result.expected_but_missing)).toBe(true);
+  it.skipIf(!canCheckOwnership)("marks a listener started from the project as owned", async () => {
+    const dir = makeProject();
+    const { port } = await startListener(dir);
+    const [service] = (await getRunningServices([port], dir)).running;
+    expect(service.owned_by_project).toBe(true);
+  });
+
+  it.skipIf(!canCheckOwnership)("marks a listener started from another directory as not owned", async () => {
+    const project = makeProject();
+    const elsewhere = makeProject();
+    const { port } = await startListener(elsewhere);
+    const [service] = (await getRunningServices([port], project)).running;
+    expect(service.owned_by_project).toBe(false);
+    expect(service.process_cwd).toBeTruthy();
+  });
+
+  it("reports a free port as missing", async () => {
+    const dir = makeProject();
+    const { port } = await startListener(dir);
+    // A port right next to a live one is almost certainly free; skip if not.
+    const free = port === 65535 ? port - 1 : port + 1;
+    const result = await getRunningServices([free], dir);
+    if (result.running.length === 0) expect(result.expected_but_missing).toEqual([free]);
+  });
+});
+
+describe("getRunningServices per-port fallback (unchecked_ports)", () => {
+  const fails: Lookup = async () => {
+    throw new Error("unavailable");
+  };
+  const failsOn = (bad: number): Lookup => async (port) => {
+    if (port === bad) throw new Error("timed out");
+    return null;
+  };
+  const holds = (held: number): Lookup => async (port) => (port === held ? { pid: 7, name: "node" } : null);
+
+  it("lists ports whose lookup failed while others succeeded", async () => {
+    const result = await getRunningServices([3000, 8080], undefined, { procfs: false, chain: [["a", failsOn(8080)]] });
+    expect(result.detection_available).toBe(true);
+    expect(result.expected_but_missing).toEqual([3000]);
+    expect(result.unchecked_ports).toEqual([8080]);
+  });
+
+  it("tries the next method for a port the first one couldn't check", async () => {
+    const result = await getRunningServices([3000, 8080], undefined, {
+      procfs: false,
+      chain: [["a", failsOn(8080)], ["b", holds(8080)]],
+    });
+    expect(result.unchecked_ports).toEqual([]);
+    expect(result.running.map((s) => s.port)).toEqual([8080]);
+    expect(result.expected_but_missing).toEqual([3000]);
+  });
+
+  it("reports detection unavailable when every lookup fails", async () => {
+    const result = await getRunningServices([3000, 8080], undefined, { procfs: false, chain: [["a", fails]] });
+    expect(result.detection_available).toBe(false);
+    expect(result.unchecked_ports).toEqual([3000, 8080]);
+    expect(result.expected_but_missing).toEqual([]);
+  });
+});
+
+describe("Windows netstat / tasklist parsing", () => {
+  const netstat = [
+    "",
+    "Active Connections",
+    "",
+    "  Proto  Local Address          Foreign Address        State           PID",
+    "  TCP    0.0.0.0:135            0.0.0.0:0              LISTENING       1052",
+    "  TCP    127.0.0.1:3000         127.0.0.1:52144        ESTABLISHED     4242",
+    "  TCP    127.0.0.1:52144        127.0.0.1:3000         ESTABLISHED     5151",
+    "  TCP    127.0.0.1:3000         0.0.0.0:0              LISTENING       4242",
+    "  TCP    127.0.0.1:30000        0.0.0.0:0              ABHÖREN         777",
+    "  TCP    [::]:5173              [::]:0                 LISTENING       888",
+    "  UDP    0.0.0.0:5353           *:*                                    999",
+  ].join("\r\n");
+
+  it("finds the listening pid for a port, IPv4 and IPv6", () => {
+    expect(parseNetstatListener(netstat, 3000)).toBe(4242);
+    expect(parseNetstatListener(netstat, 5173)).toBe(888);
+  });
+
+  it("does not depend on the localized state column", () => {
+    expect(parseNetstatListener(netstat, 30000)).toBe(777);
+  });
+
+  it("ignores connections, prefix matches and UDP", () => {
+    expect(parseNetstatListener(netstat, 52144)).toBeNull();
+    expect(parseNetstatListener(netstat, 300)).toBeNull();
+    expect(parseNetstatListener(netstat, 5353)).toBeNull();
+  });
+
+  it("reads the image name from tasklist CSV output", () => {
+    expect(parseTasklistName('"node.exe","4242","Console","1","45,000 K"')).toBe("node.exe");
+    expect(parseTasklistName("INFO: No tasks are running which match the specified criteria.")).toBeNull();
+  });
+});
+
+describe("processStartTime", () => {
+  it.skipIf(!canCheckOwnership)(
+    "reads when a process started (Linux /proc stat, macOS ps lstart)",
+    async () => {
+      const started = await processStartTime(process.pid);
+      expect(started).not.toBeNull();
+      const expected = Date.now() - process.uptime() * 1000;
+      expect(Math.abs(Date.parse(started!) - expected)).toBeLessThan(5000);
+    }
+  );
+
+  it.skipIf(canCheckOwnership)("returns null on Windows (start time not implemented there)", async () => {
+    expect(await processStartTime(process.pid)).toBeNull();
+  });
+
+  it("returns null for a null pid", async () => {
+    expect(await processStartTime(null)).toBeNull();
+  });
+});
+
+describe("settleDefaultPorts", () => {
+  const base = {
+    running: [{ port: 3000, pid: 1, name: "node", process_cwd: null, owned_by_project: true, started_at: null }],
+    expected_but_missing: [8080],
+    unchecked_ports: [],
+    detection_available: true,
+    detection_method: "procfs",
+  };
+
+  it("clears the other default ports once our server is up", () => {
+    expect(settleDefaultPorts(base, "default").expected_but_missing).toEqual([]);
+  });
+
+  it("keeps missing ports when they came from config", () => {
+    expect(settleDefaultPorts(base, "config").expected_but_missing).toEqual([8080]);
+  });
+
+  it("keeps missing ports when only a foreign process is up", () => {
+    const foreign = { ...base, running: [{ ...base.running[0], owned_by_project: false }] };
+    expect(settleDefaultPorts(foreign, "default").expected_but_missing).toEqual([8080]);
   });
 });
