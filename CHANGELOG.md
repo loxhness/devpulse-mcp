@@ -26,6 +26,7 @@ The two headline features now work: log errors are actually read, and port confl
 - **Required-version checks were wrong at range boundaries** (e.g. `^20.11` accepted Node 20.10). `>=`, `>`, `^` and `~` now compare full versions.
 - **Short secrets in `key=value` form leaked** (e.g. `password=hunter2`). They're now redacted at any length, while phrases like `token: expired` are kept.
 - **Extra tool arguments caused an error.** They're now ignored, and `cwd` and `limit` are still validated.
+- **Port checks on Windows took several seconds** whenever a port was in use. devpulse now reads `netstat` and `tasklist` directly instead of going through PowerShell, and a `netstat` failure is reported as "couldn't check" instead of "nothing listening".
 - **Ports that couldn't be checked looked free.** Each port now falls back through the lookup methods on its own. Ports no method could check are listed in `unchecked_ports` and never described as free.
 
 ### Added
