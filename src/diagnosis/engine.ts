@@ -206,14 +206,18 @@ function core(input: DiagnosisInput): DiagnosisResult {
     };
   }
 
-  // 9. Healthy.
+  // 9. Healthy (warnings alone don't change the verdict, but they're listed).
   const ownershipKnown = up.every((s) => s.owned_by_project === true);
+  const warnings = errors.filter((e) => e.level.toUpperCase() === "WARN").slice(-3);
   return {
     health: "healthy",
     primary_issue: null,
-    secondary_signals: up.map((s) => `Port ${s.port}: ${s.name}${s.pid !== null ? ` (pid ${s.pid})` : ""}`),
+    secondary_signals: [
+      ...up.map((s) => `Port ${s.port}: ${s.name}${s.pid !== null ? ` (pid ${s.pid})` : ""}`),
+      ...warnings.map((w) => `Warning: ${w.message}`),
+    ],
     suggested_action: null,
-    confidence: ownershipKnown ? "high" : "medium",
+    confidence: ownershipKnown && warnings.length === 0 ? "high" : "medium",
   };
 }
 

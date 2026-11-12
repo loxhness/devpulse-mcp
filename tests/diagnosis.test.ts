@@ -86,6 +86,14 @@ describe("diagnose", () => {
     expect(diagnose(input({ running: [own] }))).toMatchObject({ health: "healthy", confidence: "high" });
   });
 
+  it("server up with only warnings -> healthy/medium, warnings listed", () => {
+    const result = diagnose(
+      input({ running: [own], recentErrors: [{ level: "WARN", message: "DeprecationWarning: punycode" }] })
+    );
+    expect(result).toMatchObject({ health: "healthy", confidence: "medium" });
+    expect(result.secondary_signals).toContain("Warning: DeprecationWarning: punycode");
+  });
+
   it("ownership unknown (e.g. Windows) -> healthy/medium", () => {
     const result = diagnose(input({ running: [{ ...own, owned_by_project: null }] }));
     expect(result).toMatchObject({ health: "healthy", confidence: "medium" });
