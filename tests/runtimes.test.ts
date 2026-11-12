@@ -42,4 +42,42 @@ describe("versionMismatch", () => {
   ])("installed %s, required %s -> %s", (installed, required, expected) => {
     expect(versionMismatch(installed, required)).toBe(expected);
   });
+
+  // Boundaries for each operator; missing version parts count as 0.
+  it.each([
+    // >=
+    ["20.10.9", ">=20.11.0", true],
+    ["20.11.0", ">=20.11.0", false],
+    ["20.11.1", ">=20.11", false],
+    ["21.0.0", ">=20.11", false],
+    // >
+    ["20.11.0", ">20.11", true],
+    ["20.11.5", ">20.11", false],
+    ["20.10.9", ">20.11", true],
+    ["20.0.0", ">20", true],
+    ["20.0.1", ">20", false],
+    // ^ (same major; for 0.x, same minor)
+    ["20.10.0", "^20.11", true],
+    ["20.11.0", "^20.11", false],
+    ["20.99.0", "^20.11", false],
+    ["21.0.0", "^20.11", true],
+    ["0.3.0", "^0.3.1", true],
+    ["0.3.1", "^0.3.1", false],
+    ["0.3.9", "^0.3.1", false],
+    ["0.4.0", "^0.3.1", true],
+    // ~ (same minor when given, else same major)
+    ["20.11.1", "~20.11.2", true],
+    ["20.11.2", "~20.11.2", false],
+    ["20.11.9", "~20.11.2", false],
+    ["20.12.0", "~20.11.2", true],
+    ["20.0.0", "~20", false],
+    ["20.99.0", "~20", false],
+    ["21.0.0", "~20", true],
+    // bare version: every given part must match
+    ["20.11.7", "20.11", false],
+    ["20.12.0", "20.11", true],
+    ["20.11.1", "20.11.0", true],
+  ])("boundary: installed %s, required %s -> %s", (installed, required, expected) => {
+    expect(versionMismatch(installed, required)).toBe(expected);
+  });
 });

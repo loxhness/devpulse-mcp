@@ -105,21 +105,49 @@ export async function detectRuntimes(cwd: string): Promise<RuntimeInfo> {
  */
 export function versionMismatch(installed: string | null, required: string | null): boolean | null {
   if (!installed || !required) return null;
-  const req = required.trim();
-  const installedParts = installed.split(".").map(Number);
+  const have = toTuple(installed);
+  if (!have) return null;
 
-  const range = req.match(/^(>=|>|\^|~)?\s*v?(\d+)(?:\.(\d+))?(?:\.(\d+))?$/);
+  const range = required.trim().match(/^(>=|>|\^|~|=)?\s*v?(\d+)(?:\.(\d+))?(?:\.(\d+))?$/);
   if (!range) return null; // aliases like lts/iron, complex ranges
-  const [, op, majorRaw, minorRaw] = range;
-  const major = Number(majorRaw);
-  const minor = minorRaw !== undefined ? Number(minorRaw) : null;
+  const [, op, majorRaw, minorRaw, patchRaw] = range;
+  const given = [majorRaw, minorRaw, patchRaw].filter((part) => part !== undefined).map(Number);
+  // Missing parts count as 0: ">=20.11" means ">=20.11.0".
+  const want: Tuple = [given[0], given[1] ?? 0, given[2] ?? 0];
 
-  if (op === ">=" || op === ">") {
-    if (installedParts[0] !== major) return installedParts[0] < major;
-    if (minor === null) return op === ">" ? true : false;
-    return installedParts[1] < minor;
+  switch (op) {
+    case ">=":
+      return compare(have, want) < 0;
+    case ">":
+      return compare(have, want) <= 0;
+    case "^": {
+      // Same major; for 0.x the same minor; for 0.0.x the same patch.
+      const upper: Tuple =
+        want[0] > 0 ? [want[0] + 1, 0, 0] : want[1] > 0 ? [0, want[1] + 1, 0] : [0, 0, want[2] + 1];
+      return compare(have, want) < 0 || compare(have, upper) >= 0;
+    }
+    case "~": {
+      // Same minor when one is given ("~20.11"), otherwise the same major ("~20").
+      const upper: Tuple = given.length >= 2 ? [want[0], want[1] + 1, 0] : [want[0] + 1, 0, 0];
+      return compare(have, want) < 0 || compare(have, upper) >= 0;
+    }
+    default:
+      // Bare or "=" version: every part that is given must match ("20.11" accepts 20.11.x).
+      return given.some((part, i) => have[i] !== part);
   }
-  if (installedParts[0] !== major) return true;
-  if (op === "^" || minor === null) return false;
-  return installedParts[1] !== minor;
+}
+
+type Tuple = [number, number, number];
+
+function toTuple(version: string): Tuple | null {
+  const match = version.trim().match(/^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?/);
+  if (!match) return null;
+  return [Number(match[1]), Number(match[2] ?? 0), Number(match[3] ?? 0)];
+}
+
+function compare(a: Tuple, b: Tuple): number {
+  for (let i = 0; i < 3; i++) {
+    if (a[i] !== b[i]) return a[i] - b[i];
+  }
+  return 0;
 }
