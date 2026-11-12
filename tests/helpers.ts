@@ -7,11 +7,22 @@ import { afterEach } from "vitest";
 const created: string[] = [];
 const children: ChildProcess[] = [];
 
-afterEach(() => {
-  while (children.length > 0) children.pop()?.kill();
+afterEach(async () => {
+  // Wait for listeners to exit first: Windows can't delete a folder that is a
+  // running process's working directory.
+  await Promise.all(
+    children.splice(0).map(
+      (child) =>
+        new Promise<void>((resolve) => {
+          if (child.exitCode !== null || child.signalCode !== null) return resolve();
+          child.once("exit", () => resolve());
+          child.kill();
+        })
+    )
+  );
   while (created.length > 0) {
     const dir = created.pop();
-    if (dir) rmSync(dir, { recursive: true, force: true });
+    if (dir) rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 

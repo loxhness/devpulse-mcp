@@ -1,4 +1,4 @@
-import { readFile, readdir, readlink } from "node:fs/promises";
+import { readFile, readdir, readlink, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, parse, relative, resolve } from "node:path";
 import findProcess from "find-process";
@@ -210,8 +210,11 @@ export async function checkOwnership(
   projectRoot: string | undefined
 ): Promise<{ owned: boolean | null; cwd: string | null }> {
   if (pid === null || !projectRoot) return { owned: null, cwd: null };
-  const root = resolve(projectRoot);
-  const cwd = await processCwd(pid);
+  // Compare real paths: on macOS /var and /tmp are symlinks to /private/..., and
+  // lsof reports the resolved path, so the same folder can have two spellings.
+  const root = await realpath(resolve(projectRoot)).catch(() => resolve(projectRoot));
+  const rawCwd = await processCwd(pid);
+  const cwd = rawCwd ? await realpath(rawCwd).catch(() => rawCwd) : null;
   if (cwd) {
     if (isInside(cwd, root)) return { owned: true, cwd };
     // A monorepo root running the dev server for a package inside it.
@@ -219,7 +222,9 @@ export async function checkOwnership(
     if (!tooBroad && isInside(root, cwd)) return { owned: true, cwd };
   }
   const commandLine = await processCommandLine(pid);
-  if (commandLine && commandLine.includes(root)) return { owned: true, cwd };
+  if (commandLine && (commandLine.includes(root) || commandLine.includes(resolve(projectRoot)))) {
+    return { owned: true, cwd };
+  }
   if (cwd) return { owned: false, cwd };
   return { owned: null, cwd: null };
 }
