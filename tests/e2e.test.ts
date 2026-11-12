@@ -96,6 +96,25 @@ describe("devpulse over stdio", () => {
     expect(services.expected_ports).toEqual([5173]);
   });
 
+  it("ignores unknown extra arguments but still type-checks known ones", async () => {
+    const dir = makeProject({ "package.json": JSON.stringify({ devDependencies: { vite: "5" } }) });
+    const c = await connect();
+    const { tools } = await c.listTools();
+    for (const tool of tools) expect(tool.inputSchema).not.toHaveProperty("additionalProperties", false);
+
+    const errors = await c.callTool({ name: "get_recent_errors", arguments: { cwd: dir, limit: 5, verbose: true } });
+    expect(errors.isError).toBeFalsy();
+    const services = await c.callTool({ name: "get_running_services", arguments: { cwd: dir, extra: "x" } });
+    expect(parse(services).expected_ports).toEqual([5173]);
+
+    await expect(
+      c.callTool({ name: "get_session_snapshot", arguments: { cwd: 42, extra: 1 } })
+    ).rejects.toMatchObject({ code: -32602 });
+    await expect(
+      c.callTool({ name: "get_recent_errors", arguments: { limit: 201, extra: 1 } })
+    ).rejects.toMatchObject({ code: -32602 });
+  });
+
   it("rejects unknown tools and invalid arguments with protocol errors", async () => {
     const c = await connect();
     await expect(c.callTool({ name: "nope", arguments: {} })).rejects.toMatchObject({ code: -32602 });

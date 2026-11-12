@@ -38,7 +38,7 @@ const TOOLS = [
     title: "Dev environment snapshot",
     description:
       "Diagnoses the user's local dev environment in one call: health verdict with the likely cause and a suggested fix, framework, git state (branch, uncommitted and conflicted files), dev server ports and who holds them, the 10 most recent log errors, and runtime versions. Call this first whenever the user reports something broken, before asking them what's wrong. Use the other tools only to dig deeper.",
-    inputSchema: { type: "object", properties: { cwd: CWD_PROPERTY }, additionalProperties: false },
+    inputSchema: { type: "object", properties: { cwd: CWD_PROPERTY } },
     annotations: { title: "Dev environment snapshot", ...READ_ONLY },
   },
   {
@@ -58,7 +58,6 @@ const TOOLS = [
           description: "Maximum number of entries to return, newest last. Default 50.",
         },
       },
-      additionalProperties: false,
     },
     annotations: { title: "Recent log errors", ...READ_ONLY },
   },
@@ -67,18 +66,17 @@ const TOOLS = [
     title: "Dev server ports",
     description:
       "Checks the ports this project's dev server should use (read from its config, or framework defaults) and reports which are listening, the process holding each, and whether that process belongs to this project. Use this to confirm a port conflict or check whether the dev server came back up after a restart, without rerunning the full snapshot.",
-    inputSchema: { type: "object", properties: { cwd: CWD_PROPERTY }, additionalProperties: false },
+    inputSchema: { type: "object", properties: { cwd: CWD_PROPERTY } },
     annotations: { title: "Dev server ports", ...READ_ONLY },
   },
 ];
 
-const CwdArgs = z.object({ cwd: z.string().min(1).optional() }).strict();
-const ErrorArgs = z
-  .object({
-    cwd: z.string().min(1).optional(),
-    limit: z.number().int().min(1).max(200).optional(),
-  })
-  .strict();
+// Unknown extra arguments are ignored (zod strips them); known ones are type- and range-checked.
+const CwdArgs = z.object({ cwd: z.string().min(1).optional() });
+const ErrorArgs = z.object({
+  cwd: z.string().min(1).optional(),
+  limit: z.number().int().min(1).max(200).optional(),
+});
 
 const server = new Server(
   { name: "devpulse", version: VERSION },
