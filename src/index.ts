@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import { isAbsolute, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -9,7 +8,6 @@ import {
   ErrorCode,
   ListToolsRequestSchema,
   McpError,
-  RootsListChangedNotificationSchema,
   type CallToolResult,
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
@@ -17,6 +15,7 @@ import { detectFramework } from "./detectors/frameworks.js";
 import { getRecentErrors } from "./tools/errors.js";
 import { getRunningServices, settleDefaultPorts } from "./tools/processes.js";
 import { getSessionSnapshot } from "./tools/snapshot.js";
+import { createRootResolver } from "./utils/roots.js";
 import { VERSION } from "./version.js";
 
 const READ_ONLY = {
@@ -89,26 +88,8 @@ const server = new Server(
 
 // ---------- Working directory resolution ----------
 
-let cachedRoot: string | null | undefined;
-
-async function clientRoot(): Promise<string | null> {
-  if (cachedRoot !== undefined) return cachedRoot;
-  cachedRoot = null;
-  if (server.getClientCapabilities()?.roots) {
-    try {
-      const { roots } = await server.listRoots(undefined, { timeout: 3000 });
-      const fileRoot = roots.find((root) => root.uri.startsWith("file://"));
-      if (fileRoot) cachedRoot = fileURLToPath(fileRoot.uri);
-    } catch {
-      // Client advertised roots but didn't answer; fall back to cwd.
-    }
-  }
-  return cachedRoot;
-}
-
-server.setNotificationHandler(RootsListChangedNotificationSchema, async () => {
-  cachedRoot = undefined;
-});
+// Shared, promise-cached roots/list lookup; refreshed on roots/list_changed.
+const clientRoot = createRootResolver(server);
 
 /**
  * Order: explicit `cwd` argument, the client's workspace root (MCP roots),

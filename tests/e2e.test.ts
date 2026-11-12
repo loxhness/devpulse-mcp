@@ -50,6 +50,21 @@ async function connect(rootDir?: string): Promise<Client> {
   return client;
 }
 
+/** Connects with a roots capability whose answer can change; counts roots/list requests. */
+async function connectWithRoots(getRoot: () => string, delayMs = 0): Promise<{ c: Client; listCalls: () => number }> {
+  let calls = 0;
+  client = new Client({ name: "devpulse-e2e", version: "1.0.0" }, { capabilities: { roots: { listChanged: true } } });
+  client.setRequestHandler(ListRootsRequestSchema, async () => {
+    calls++;
+    if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
+    return { roots: [{ uri: pathToFileURL(getRoot()).href, name: "project" }] };
+  });
+  await client.connect(
+    new StdioClientTransport({ command: process.execPath, args: [entry], cwd: tmpdir(), stderr: "ignore" })
+  );
+  return { c: client, listCalls: () => calls };
+}
+
 function parse(result: Awaited<ReturnType<Client["callTool"]>>): any {
   const content = result.content as Array<{ type: string; text: string }>;
   return JSON.parse(content[0].text);
@@ -85,6 +100,28 @@ describe("devpulse over stdio", () => {
     const snapshot = parse(await c.callTool({ name: "get_session_snapshot", arguments: {} }));
     expect(snapshot.session.path).toBe(dir);
     expect(snapshot.recent_errors).toHaveLength(1);
+  });
+
+  it("concurrent calls share one roots/list request and all use the workspace root", async () => {
+    const dir = makeProject({ "package.json": JSON.stringify({ dependencies: {} }) });
+    const { c, listCalls } = await connectWithRoots(() => dir, 300);
+    const results = await Promise.all(
+      [1, 2, 3].map(() => c.callTool({ name: "get_session_snapshot", arguments: {} }))
+    );
+    for (const result of results) expect(parse(result).session.path).toBe(dir);
+    expect(listCalls()).toBe(1);
+  });
+
+  it("refreshes the workspace root after roots/list_changed", async () => {
+    const first = makeProject({ "package.json": JSON.stringify({ dependencies: {} }) });
+    const second = makeProject({ "package.json": JSON.stringify({ dependencies: {} }) });
+    let current = first;
+    const { c } = await connectWithRoots(() => current);
+    expect(parse(await c.callTool({ name: "get_session_snapshot", arguments: {} })).session.path).toBe(first);
+
+    current = second;
+    await c.sendRootsListChanged();
+    expect(parse(await c.callTool({ name: "get_session_snapshot", arguments: {} })).session.path).toBe(second);
   });
 
   it("accepts an explicit cwd for each tool", async () => {
