@@ -1,17 +1,17 @@
 {
     "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-    "name": "io.github.tao-izm/devpulse-mcp",
+    "name": "io.github.loxhness/devpulse-mcp",
     "description": "Zero-config MCP server for AI coding assistants. Diagnoses your dev environment in one call.",
     "repository": {
-      "url": "https://github.com/tao-izm/devpulse-mcp",
+      "url": "https://github.com/loxhness/devpulse-mcp",
       "source": "github"
     },
-    "version": "0.1.1",
+    "version": "0.1.2",
     "packages": [
       {
         "registryType": "npm",
         "identifier": "devpulse-mcp",
-        "version": "0.1.1",
+        "version": "0.1.2",
         "transport": {
           "type": "stdio"
         }
