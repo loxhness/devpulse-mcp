@@ -14,12 +14,19 @@ describe("classifyLine", () => {
     ["Found 3 errors in 2 files.", "ERROR"],
     ["[warn] slow query", "WARN"],
     ["(node:123) DeprecationWarning: Buffer() is deprecated", "WARN"],
+    ["Compiled with 3 warnings", "WARN"],
+    ["warnings: unused import in src/app.ts", "WARN"],
+    ["2 warnings generated.", "WARN"],
+    ["Found errors in 2 files", "ERROR"],
   ])("%s -> %s", (line, level) => {
     expect(classifyLine(line)).toBe(level);
   });
 
   it.each([
     "0 errors, 0 warnings",
+    "no warnings",
+    "Build finished with no warnings.",
+    "warningsAsErrors=false",
     "Compiled successfully. No errors found.",
     "registered errorHandler middleware",
     "GET /api/users 200 12ms",

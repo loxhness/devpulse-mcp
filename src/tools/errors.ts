@@ -29,9 +29,11 @@ const MAX_DEPTH = 3;
 const MAX_STACK_LINES = 10;
 const SKIP_DIRS = new Set(["node_modules", "__pycache__", "venv", "bin", "obj"]);
 
+// Plurals ("errors", "warnings") only as standalone words, so identifiers like
+// warningsAsErrors don't match while "Compiled with 3 warnings" does.
 const ERROR_RE =
-  /\b(?:\w*error|\w*exception|fatal|uncaught|unhandled|traceback|panic(?:ked)?|EADDRINUSE|ECONNREFUSED)\b|\bERR!/i;
-const WARN_RE = /\b(?:\w*warn(?:ing)?|deprecat\w*)\b/i;
+  /\b(?:\w*error|errors|\w*exception|fatal|uncaught|unhandled|traceback|panic(?:ked)?|EADDRINUSE|ECONNREFUSED)\b|\bERR!/i;
+const WARN_RE = /\b(?:\w*warn(?:ing)?|warnings|deprecat\w*)\b/i;
 const ZERO_SUMMARY_RE = /\b(?:0|no)\s+(?:errors?|warnings?|problems?)\b/gi;
 const NONZERO_SUMMARY_RE = /\b[1-9]\d*\s+(?:errors?|problems?)\b/i;
 const STACK_LINE_RE = /^\s+(?:at\s|File\s"|\.\.\.\s\d+ more|\^)/;
