@@ -18,6 +18,15 @@ The two headline features now work: log errors are actually read, and port confl
 - **A repo with no commits lost its branch name.**
 - **FastAPI was detected from `package.json`**, which Python projects don't have.
 - The server reported version 0.1.0; tool failures weren't flagged with `isError`; unknown tools returned a misleading message.
+- **A recent `EADDRINUSE` on an occupied port is always a conflict.** Before, it was only reported when the process was known to belong to another project. If ownership is unknown (always on Windows), the diagnosis names the process and says whose it is can't be told. If the process belongs to your project, its start time is compared with the error: an earlier instance still running is reported, a restart after the error isn't, and an unknown start time gives a low-confidence conflict.
+- **The port named in `EADDRINUSE` is checked**, even when it isn't one of the project's expected ports. "Appears free now" is only said for a port that was actually checked and found free.
+- **Concurrent tool calls could pick the wrong project.** All calls now share one workspace-roots request. A failed or timed-out request is no longer cached until the client's next roots change.
+- **"Compiled with 3 warnings" and "Found errors in 2 files" were ignored.** Plural forms now match, while "0 errors, 0 warnings" and "no warnings" still don't.
+- **Repeated timestamped log lines weren't merged.** They now collapse into one entry with a count and the latest time, and the timestamp is no longer repeated in the message.
+- **Required-version checks were wrong at range boundaries** (e.g. `^20.11` accepted Node 20.10). `>=`, `>`, `^` and `~` now compare full versions.
+- **Short secrets in `key=value` form leaked** (e.g. `password=hunter2`). They're now redacted at any length, while phrases like `token: expired` are kept.
+- **Extra tool arguments caused an error.** They're now ignored, and `cwd` and `limit` are still validated.
+- **Ports that couldn't be checked looked free.** Each port now falls back through the lookup methods on its own. Ports no method could check are listed in `unchecked_ports` and never described as free.
 
 ### Added
 
