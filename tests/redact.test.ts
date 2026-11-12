@@ -29,6 +29,13 @@ describe("redact: secrets are removed", () => {
     expect(redact("DATABASE_PASSWORD='s3cr3t-value'")).toBe("DATABASE_PASSWORD='[REDACTED]'");
   });
 
+  it("short values after '=' with no space (logfmt, query strings)", () => {
+    expect(redact("db login password=hunter2 user=bob")).toBe("db login password=[REDACTED] user=bob");
+    expect(redact("TOKEN=abc")).toBe("TOKEN=[REDACTED]");
+    expect(redact("GET /cb?token=x1&state=ok")).toBe("GET /cb?token=[REDACTED]&state=ok");
+    expect(redact("api_key=k9 secret=s")).toBe("api_key=[REDACTED] secret=[REDACTED]");
+  });
+
   it("JSON key/value pairs", () => {
     expect(redact('{"password": "correcthorsebattery"}')).toBe('{"password": "[REDACTED]"}');
   });
@@ -48,6 +55,8 @@ describe("redact: debugging details survive", () => {
     "HEAD is now at 3f9a1c2b4d5e6f708192a3b4c5d6e7f8091a2b3c",
     "request id 550e8400e29b41d4a716446655440000",
     "token: expired",
+    "password: invalid",
+    "token = refresh pending",
     "auth: failed for user bob",
     "Cannot find module './components/Button.module.css'",
     "hello world",

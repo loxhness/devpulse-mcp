@@ -49,8 +49,15 @@ export function redact(input: string): string {
       `$1$2$3${R}$3`
     );
 
-    // key: value / "key": "value" pairs (JSON, YAML, logfmt). Values must look
-    // like credentials (8+ chars) so phrases like "token: expired" survive.
+    // key=value with no space (logfmt, query strings, CLI flags): this shape is an
+    // assignment, not prose, so redact values of any length (password=hunter2).
+    output = output.replace(
+      /\b(secret|token|password|passwd|api_?key|access_?key|client_?secret)=(?!\[REDACTED\])[^\s"'&,;]+/gi,
+      `$1=${R}`
+    );
+
+    // key: value / "key": "value" pairs (JSON, YAML). Values must look like
+    // credentials (8+ chars) so phrases like "token: expired" survive.
     output = output.replace(
       /(["']?\b(?:secret|token|password|passwd|api_?key|access_?key|client_?secret)\b["']?\s*[:=]\s*["']?)(?!\[REDACTED\])([A-Za-z0-9_\-./+=]{8,})/gi,
       `$1${R}`
