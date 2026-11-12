@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getRunningServices, settleDefaultPorts } from "../src/tools/processes.js";
+import { getRunningServices, settleDefaultPorts, type Lookup } from "../src/tools/processes.js";
 import { makeProject, startListener } from "./helpers.js";
 
 const canCheckOwnership = process.platform === "linux" || process.platform === "darwin";
@@ -53,10 +53,46 @@ describe("getRunningServices", () => {
   });
 });
 
+describe("getRunningServices per-port fallback (unchecked_ports)", () => {
+  const fails: Lookup = async () => {
+    throw new Error("unavailable");
+  };
+  const failsOn = (bad: number): Lookup => async (port) => {
+    if (port === bad) throw new Error("timed out");
+    return null;
+  };
+  const holds = (held: number): Lookup => async (port) => (port === held ? { pid: 7, name: "node" } : null);
+
+  it("lists ports whose lookup failed while others succeeded", async () => {
+    const result = await getRunningServices([3000, 8080], undefined, { procfs: false, chain: [["a", failsOn(8080)]] });
+    expect(result.detection_available).toBe(true);
+    expect(result.expected_but_missing).toEqual([3000]);
+    expect(result.unchecked_ports).toEqual([8080]);
+  });
+
+  it("tries the next method for a port the first one couldn't check", async () => {
+    const result = await getRunningServices([3000, 8080], undefined, {
+      procfs: false,
+      chain: [["a", failsOn(8080)], ["b", holds(8080)]],
+    });
+    expect(result.unchecked_ports).toEqual([]);
+    expect(result.running.map((s) => s.port)).toEqual([8080]);
+    expect(result.expected_but_missing).toEqual([3000]);
+  });
+
+  it("reports detection unavailable when every lookup fails", async () => {
+    const result = await getRunningServices([3000, 8080], undefined, { procfs: false, chain: [["a", fails]] });
+    expect(result.detection_available).toBe(false);
+    expect(result.unchecked_ports).toEqual([3000, 8080]);
+    expect(result.expected_but_missing).toEqual([]);
+  });
+});
+
 describe("settleDefaultPorts", () => {
   const base = {
     running: [{ port: 3000, pid: 1, name: "node", process_cwd: null, owned_by_project: true }],
     expected_but_missing: [8080],
+    unchecked_ports: [],
     detection_available: true,
     detection_method: "procfs",
   };

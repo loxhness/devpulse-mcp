@@ -114,6 +114,23 @@ describe("diagnose", () => {
     expect(noisy.health).toBe("degraded");
   });
 
+  it("never claims nothing is listening on an unchecked port", () => {
+    const result = diagnose(input({ expected_but_missing: [8080], uncheckedPorts: [3000] }));
+    const text = JSON.stringify(result);
+    expect(text).not.toMatch(/Nothing is listening on (port )?3000/);
+    expect(result.health).toBe("unknown");
+    expect(text).toContain("3000");
+    expect(result.secondary_signals.join(" ")).toContain("Could not check port 3000");
+  });
+
+  it("crash diagnosis flags unchecked ports instead of calling them free", () => {
+    const result = diagnose(
+      input({ uncheckedPorts: [3000], recentErrors: [{ level: "ERROR", message: "Unhandled exception" }] })
+    );
+    expect(result.secondary_signals).toContain("Could not check port 3000");
+    expect(JSON.stringify(result)).not.toMatch(/Nothing is listening on (port )?3000/);
+  });
+
   it("projects with no dev server port are healthy when there are no errors", () => {
     expect(diagnose(input({ portSource: "none" })).health).toBe("healthy");
   });

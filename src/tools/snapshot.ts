@@ -41,6 +41,7 @@ export interface SessionSnapshot {
   services: {
     running: ServiceInfo[];
     expected_but_missing: number[];
+    unchecked_ports: number[];
     expected_ports: number[];
     port_source: FrameworkInfo["portSource"];
     detection_available: boolean;
@@ -165,6 +166,7 @@ export async function getSessionSnapshot(cwd: string): Promise<SessionSnapshot> 
   const emptyServices: ProcessResult = {
     running: [],
     expected_but_missing: [],
+    unchecked_ports: [],
     detection_available: true,
     detection_method: null,
   };
@@ -173,7 +175,11 @@ export async function getSessionSnapshot(cwd: string): Promise<SessionSnapshot> 
     detectRuntimes(root),
     getRunningServices(framework.expectedPorts, root)
       .then((result) => settleDefaultPorts(result, framework.portSource))
-      .catch(() => ({ ...emptyServices, detection_available: false })),
+      .catch(() => ({
+        ...emptyServices,
+        unchecked_ports: framework.expectedPorts,
+        detection_available: false,
+      })),
     getRecentErrors(root, framework.logPaths, 200).catch(() => ({ errors: [], log_files: [] })),
     getGitState(root).catch(() => null),
     framework.language === "node" ? nodeDependenciesMissing(root) : Promise.resolve(false),
@@ -186,6 +192,7 @@ export async function getSessionSnapshot(cwd: string): Promise<SessionSnapshot> 
     portSource: framework.portSource,
     running: services.running,
     expected_but_missing: services.expected_but_missing,
+    uncheckedPorts: services.unchecked_ports,
     detectionAvailable: services.detection_available,
     // Old log lines shouldn't decide today's verdict; they're still listed below.
     recentErrors: errors.errors.filter((e) => Date.now() - Date.parse(e.at) <= DIAGNOSIS_WINDOW_MS),
@@ -209,6 +216,7 @@ export async function getSessionSnapshot(cwd: string): Promise<SessionSnapshot> 
     services: {
       running: services.running,
       expected_but_missing: services.expected_but_missing,
+      unchecked_ports: services.unchecked_ports,
       expected_ports: framework.expectedPorts,
       port_source: framework.portSource,
       detection_available: services.detection_available,

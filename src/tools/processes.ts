@@ -2,7 +2,7 @@ import { readFile, readdir, readlink, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, parse, relative, resolve } from "node:path";
 import findProcess from "find-process";
-import { run } from "../utils/exec.js";
+import { run, runWithStatus } from "../utils/exec.js";
 
 export interface ServiceInfo {
   port: number;
@@ -21,9 +21,18 @@ export interface ServiceInfo {
 export interface ProcessResult {
   running: ServiceInfo[];
   expected_but_missing: number[];
+  /** Ports no lookup method could check (never reported as free). */
+  unchecked_ports: number[];
   /** False when no port lookup method works on this machine. */
   detection_available: boolean;
   detection_method: string | null;
+}
+
+export interface RunningServicesOptions {
+  /** Override the external-tool lookup chain (tests). */
+  chain?: Array<[string, Lookup]>;
+  /** Set false to skip the /proc fast path (tests). Default: true on Linux. */
+  procfs?: boolean;
 }
 
 interface Listener {
@@ -32,7 +41,7 @@ interface Listener {
 }
 
 /** A lookup returns the listener, null for "nothing listening", or throws if the method is unavailable. */
-type Lookup = (port: number) => Promise<Listener | null>;
+export type Lookup = (port: number) => Promise<Listener | null>;
 
 class Unavailable extends Error {}
 
@@ -134,13 +143,11 @@ const viaSs: Lookup = async (port) => {
 };
 
 const viaLsof: Lookup = async (port) => {
-  const out = await run("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-Fpc"]);
-  // lsof exits 1 with no output when nothing matches; distinguish from "missing".
-  if (out === null) {
-    const exists = await run("lsof", ["-v"]);
-    if (exists === null) throw new Unavailable("lsof not available");
-    return null;
-  }
+  const { stdout: out, code } = await runWithStatus("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-Fpc"]);
+  // lsof exits 1 with no output when nothing matches. Anything else (missing
+  // command, timeout, other errors) means this port couldn't be checked.
+  if (code === 1 && !out.trim()) return null;
+  if (code !== 0) throw new Unavailable("lsof failed");
   const pid = out.match(/^p(\d+)/m);
   const name = out.match(/^c(.+)$/m);
   if (!pid) return null;
@@ -246,45 +253,53 @@ export function settleDefaultPorts(
 
 export async function getRunningServices(
   expectedPorts: number[],
-  projectRoot?: string
+  projectRoot?: string,
+  options: RunningServicesOptions = {}
 ): Promise<ProcessResult> {
   const ports = [...new Set(expectedPorts)];
   const listeners = new Map<number, Listener | null>();
-  let method: string | null = null;
+  const methodsUsed = new Set<string>();
 
   const validPorts = ports.filter(isValidPort);
   for (const port of ports) if (!isValidPort(port)) listeners.set(port, null);
 
-  if (validPorts.length > 0 && process.platform === "linux") {
+  const useProcfs = options.procfs ?? process.platform === "linux";
+  if (validPorts.length > 0 && useProcfs) {
     try {
       const procResults = await lookupAllViaProc(validPorts);
       for (const [port, listener] of procResults) listeners.set(port, listener);
-      method = "procfs";
+      methodsUsed.add("procfs");
     } catch {
       // fall through to external tools
     }
   }
 
-  if (method === null && validPorts.length > 0) {
-    for (const [name, lookup] of lookupChain()) {
-      try {
-        const results = await Promise.all(validPorts.map((port) => lookup(port)));
-        validPorts.forEach((port, i) => listeners.set(port, results[i]));
-        method = name;
-        break;
-      } catch {
-        // try the next method
+  // Per port, walk the chain until a method answers. A port no method could
+  // check stays out of `listeners` and is reported as unchecked, never as free.
+  const chain = options.chain ?? lookupChain();
+  const pending = validPorts.filter((port) => !listeners.has(port));
+  await Promise.all(
+    pending.map(async (port) => {
+      for (const [name, lookup] of chain) {
+        try {
+          listeners.set(port, await lookup(port));
+          methodsUsed.add(name);
+          return;
+        } catch {
+          // try the next method
+        }
       }
-    }
-  }
+    })
+  );
 
-  const detectionAvailable = validPorts.length === 0 || method !== null;
+  const unchecked = validPorts.filter((port) => !listeners.has(port));
+  const detectionAvailable = validPorts.length === 0 || unchecked.length < validPorts.length;
   const running: ServiceInfo[] = [];
   const missing: number[] = [];
 
   for (const port of ports) {
+    if (!listeners.has(port)) continue; // unchecked
     const listener = listeners.get(port);
-    if (!detectionAvailable) continue;
     if (!listener) {
       missing.push(port);
       continue;
@@ -302,7 +317,8 @@ export async function getRunningServices(
   return {
     running,
     expected_but_missing: missing,
+    unchecked_ports: unchecked,
     detection_available: detectionAvailable,
-    detection_method: method,
+    detection_method: methodsUsed.size > 0 ? [...methodsUsed].join(", ") : null,
   };
 }

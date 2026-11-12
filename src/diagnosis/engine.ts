@@ -16,6 +16,8 @@ export interface DiagnosisInput {
   portSource?: "config" | "default" | "none";
   running: DiagnosisService[];
   expected_but_missing: number[];
+  /** Ports no lookup method could check; never described as free. */
+  uncheckedPorts?: number[];
   detectionAvailable?: boolean;
   recentErrors: Array<{ level: string; message: string }>;
   conflictedFiles?: number;
@@ -61,6 +63,8 @@ function core(input: DiagnosisInput): DiagnosisResult {
   const errors = input.recentErrors ?? [];
   const errorEntries = errors.filter((e) => e.level.toUpperCase() === "ERROR");
   const detectionAvailable = input.detectionAvailable ?? true;
+  const unchecked = input.uncheckedPorts ?? [];
+  const uncheckedSignals = unchecked.map((port) => `Could not check port ${port}`);
 
   // 0. Nothing to diagnose.
   if (input.projectDetected === false) {
@@ -178,9 +182,24 @@ function core(input: DiagnosisInput): DiagnosisResult {
     return {
       health: "broken",
       primary_issue: "Dev server appears to have crashed",
-      secondary_signals: topErrors(errors),
+      secondary_signals: [...topErrors(errors), ...uncheckedSignals],
       suggested_action: "Fix the error above, then restart the dev server",
       confidence: "medium",
+    };
+  }
+
+  // 7a. Not found, but some ports couldn't be checked: don't claim it's down.
+  if (!serverUp && unchecked.length > 0) {
+    const checkedFree = missing.length > 0 ? `nothing is listening on ${missing.join(", ")}; ` : "";
+    return {
+      health: "unknown",
+      primary_issue: `Dev server not found: ${checkedFree}port ${unchecked.join(", ")} could not be checked`,
+      secondary_signals: [
+        ...missing.map((port) => `Nothing is listening on port ${port}`),
+        ...uncheckedSignals,
+      ],
+      suggested_action: "Check the dev server's terminal directly, or install `ss` or `lsof`",
+      confidence: "low",
     };
   }
 
