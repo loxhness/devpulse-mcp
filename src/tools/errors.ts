@@ -199,7 +199,9 @@ export async function getRecentErrors(
       const level = classifyLine(rawLine);
       if (!level) continue;
 
-      const message = compress(redact(rawLine.trim()));
+      // The timestamp is reported in `at`; leaving it in the message would make
+      // every repeat of a timestamped line unique and defeat the dedupe below.
+      const message = compress(redact(rawLine.replace(TIMESTAMP_RE, "").trim()));
       const atMs = ts ?? lastTimestamp ?? tail.mtimeMs;
       inPythonTraceback = /^\s*Traceback \(most recent call last\)/.test(rawLine);
 

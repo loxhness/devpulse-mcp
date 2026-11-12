@@ -129,6 +129,22 @@ describe("getRecentErrors", () => {
     expect(errors[0].count).toBe(3);
   });
 
+  it("dedupes timestamped repeats, keeping the latest time and dropping the timestamp from the message", async () => {
+    const dir = makeProject({
+      "logs/app.log": [
+        "2026-01-02T03:04:05Z ERROR db timeout",
+        "INFO retrying",
+        "2026-01-02T03:09:05Z ERROR db timeout",
+        "[2026-01-02 03:14:05] ERROR db timeout",
+      ].join("\n"),
+    });
+    const { errors } = await getRecentErrors(dir, ["logs"]);
+    expect(errors).toHaveLength(1);
+    expect(errors[0].count).toBe(3);
+    expect(errors[0].message).toBe("ERROR db timeout");
+    expect(errors[0].at).toBe(new Date("2026-01-02T03:14:05").toISOString());
+  });
+
   it("only reads the tail of very large files", async () => {
     const filler = "INFO ok\n".repeat(80_000); // ~640 KB
     const dir = makeProject({
