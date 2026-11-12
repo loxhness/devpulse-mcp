@@ -7,6 +7,8 @@ export interface DiagnosisService {
   name: string;
   process_cwd?: string | null;
   owned_by_project: boolean | null;
+  /** When the listening process started (ISO), if known. */
+  started_at?: string | null;
 }
 
 export interface DiagnosisInput {
@@ -27,7 +29,8 @@ export interface DiagnosisInput {
    */
   expectedPorts?: number[];
   detectionAvailable?: boolean;
-  recentErrors: Array<{ level: string; message: string }>;
+  /** `at` is the entry's ISO timestamp, used to compare against process start times. */
+  recentErrors: Array<{ level: string; message: string; at?: string }>;
   conflictedFiles?: number;
   gitOperation?: string | null;
   dependenciesMissing?: { packageManager: string } | null;
@@ -63,6 +66,84 @@ function describe(service: DiagnosisService): string {
 
 function topErrors(errors: Array<{ level: string; message: string }>): string[] {
   return errors.filter((e) => e.level.toUpperCase() === "ERROR").slice(-3).map((e) => e.message);
+}
+
+/** Log timestamps and process start times are second-granular; closer than this is ambiguous. */
+const START_TIME_SLACK_MS = 2000;
+
+function who(service: DiagnosisService): string {
+  return service.pid !== null ? `${service.name} (pid ${service.pid})` : service.name;
+}
+
+function addrInUseOnOccupiedPort(
+  errors: DiagnosisInput["recentErrors"],
+  running: DiagnosisService[]
+): DiagnosisResult | null {
+  const addrErrors = errors.filter((e) => ADDR_IN_USE_RE.test(e.message));
+  for (const port of portsFromAddrInUse(addrErrors.map((e) => e.message))) {
+    const holder = running.find((s) => s.port === port);
+    if (!holder) continue;
+
+    // Newest EADDRINUSE for this port, if its time is known.
+    const errorTimes = addrErrors
+      .filter((e) => portsFromAddrInUse([e.message]).includes(port))
+      .map((e) => (e.at ? Date.parse(e.at) : NaN))
+      .filter((ms) => !Number.isNaN(ms));
+    const errorAt = errorTimes.length > 0 ? Math.max(...errorTimes) : null;
+
+    if (holder.owned_by_project === false) {
+      return {
+        health: "broken",
+        primary_issue: "Port conflict: another process is using this project's dev server port",
+        secondary_signals: [describe(holder), ...topErrors(errors)],
+        suggested_action:
+          "Stop the other process (it belongs to a different directory) or run this dev server on a different port",
+        confidence: "high",
+      };
+    }
+
+    if (holder.owned_by_project === null) {
+      return {
+        health: "broken",
+        primary_issue: `Port ${port} is in use by ${who(holder)}; devpulse can't tell whose process it is`,
+        secondary_signals: [describe(holder), ...topErrors(errors)],
+        suggested_action:
+          holder.pid !== null
+            ? `If pid ${holder.pid} is an old dev server, stop it; otherwise run the dev server on a different port`
+            : `Find and stop the process on port ${port}, or run the dev server on a different port`,
+        confidence: "medium",
+      };
+    }
+
+    // Owned by this project: an earlier instance, or a restart after the error?
+    const startedAt = holder.started_at ? Date.parse(holder.started_at) : NaN;
+    if (errorAt !== null && !Number.isNaN(startedAt)) {
+      if (startedAt > errorAt + START_TIME_SLACK_MS) continue; // restarted since: stale error
+      if (startedAt < errorAt - START_TIME_SLACK_MS) {
+        return {
+          health: "broken",
+          primary_issue: `An earlier instance of this project is still running on port ${port}; the new one couldn't start`,
+          secondary_signals: [describe(holder), ...topErrors(errors)],
+          suggested_action:
+            holder.pid !== null
+              ? `Stop the old instance (pid ${holder.pid}) and start again, or keep using the one already running on port ${port}`
+              : `Stop the old instance on port ${port} and start again, or keep using it`,
+          confidence: "medium",
+        };
+      }
+    }
+    return {
+      health: "broken",
+      primary_issue: `A recent start failed because port ${port} was in use; it is held by this project's ${who(holder)}, possibly an earlier instance`,
+      secondary_signals: [describe(holder), ...topErrors(errors)],
+      suggested_action:
+        holder.pid !== null
+          ? `If pid ${holder.pid} is an older instance, stop it and start again; otherwise keep using it`
+          : `If the process on port ${port} is an older instance, stop it and start again`,
+      confidence: "low",
+    };
+  }
+  return null;
 }
 
 function core(input: DiagnosisInput): DiagnosisResult {
@@ -116,6 +197,11 @@ function core(input: DiagnosisInput): DiagnosisResult {
   const foreign = onExpected.filter((s) => s.owned_by_project === false);
   const addrInUseLogged = errors.some((e) => ADDR_IN_USE_RE.test(e.message));
   const loggedPorts = portsFromAddrInUse(errors.map((e) => e.message));
+
+  // 3a. A recent EADDRINUSE names a port that is occupied now: a conflict,
+  // whoever owns it (only a restart after the error makes it stale).
+  const occupied = addrInUseOnOccupiedPort(errors, running);
+  if (occupied) return occupied;
 
   // 3. Port conflicts.
   if (foreign.length > 0 && up.length === 0) {

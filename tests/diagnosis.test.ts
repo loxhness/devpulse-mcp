@@ -77,10 +77,59 @@ describe("diagnose", () => {
     expect(JSON.stringify(result)).not.toMatch(/free now/i);
   });
 
-  it("stale EADDRINUSE while our own server is up is not a conflict", () => {
-    const result = diagnose(input({ running: [own], recentErrors: [addrInUse] }));
-    expect(result.health).toBe("degraded");
-    expect(result.primary_issue).not.toContain("conflict");
+  describe("EADDRINUSE on a port that is occupied now", () => {
+    const errorAt = "2026-11-12T10:00:00.000Z";
+    const loggedAt = { ...addrInUse, at: errorAt };
+    const before = "2026-11-12T09:30:00.000Z";
+    const after = "2026-11-12T10:05:00.000Z";
+
+    it("ownership unknown -> conflict/medium naming the process", () => {
+      const result = diagnose(input({ running: [{ ...own, owned_by_project: null }], recentErrors: [loggedAt] }));
+      expect(result).toMatchObject({ health: "broken", confidence: "medium" });
+      expect(result.primary_issue).toBe(
+        "Port 3000 is in use by node (pid 10); devpulse can't tell whose process it is"
+      );
+    });
+
+    it("own process started before the error -> earlier instance still running, broken/medium", () => {
+      const result = diagnose(input({ running: [{ ...own, started_at: before }], recentErrors: [loggedAt] }));
+      expect(result).toMatchObject({ health: "broken", confidence: "medium" });
+      expect(result.primary_issue).toBe(
+        "An earlier instance of this project is still running on port 3000; the new one couldn't start"
+      );
+      expect(result.suggested_action).toContain("pid 10");
+    });
+
+    it("own process started after the error -> stale error, no conflict (current logic)", () => {
+      const result = diagnose(input({ running: [{ ...own, started_at: after }], recentErrors: [loggedAt] }));
+      expect(result.health).toBe("degraded");
+      expect(result.primary_issue).toBe("Dev server is running but errors were logged");
+    });
+
+    it("own process with unknown start time -> conflict/low", () => {
+      const result = diagnose(input({ running: [{ ...own, started_at: null }], recentErrors: [loggedAt] }));
+      expect(result).toMatchObject({ health: "broken", confidence: "low" });
+      expect(result.primary_issue).toContain("port 3000");
+    });
+
+    it("own process but the error line has no timestamp -> conflict/low", () => {
+      const result = diagnose(input({ running: [{ ...own, started_at: before }], recentErrors: [addrInUse] }));
+      expect(result).toMatchObject({ health: "broken", confidence: "low" });
+    });
+
+    it("holder on a non-expected port named by the log still counts as a conflict", () => {
+      const holder = { port: 4000, pid: 5, name: "python", owned_by_project: null };
+      const result = diagnose(
+        input({
+          expectedPorts: [3000],
+          running: [holder],
+          expected_but_missing: [3000],
+          recentErrors: [{ level: "ERROR", message: "listen EADDRINUSE: address already in use :::4000", at: errorAt }],
+        })
+      );
+      expect(result.health).toBe("broken");
+      expect(result.primary_issue).toContain("Port 4000 is in use by python (pid 5)");
+    });
   });
 
   it("server down with errors -> crashed", () => {

@@ -16,6 +16,8 @@ export interface ServiceInfo {
    * null: ownership could not be determined (e.g. Windows, another user's process).
    */
   owned_by_project: boolean | null;
+  /** When the listening process started (ISO), or null if unknown (always null on Windows). */
+  started_at: string | null;
 }
 
 export interface ProcessResult {
@@ -212,6 +214,54 @@ async function processCommandLine(pid: number): Promise<string | null> {
   return null;
 }
 
+let clockTicks: Promise<number> | null = null;
+
+/** Linux USER_HZ (clock ticks per second) for /proc/<pid>/stat start times; almost always 100. */
+function linuxClockTicks(): Promise<number> {
+  clockTicks ??= run("getconf", ["CLK_TCK"]).then((out) => {
+    const ticks = Number(out);
+    return Number.isFinite(ticks) && ticks > 0 ? ticks : 100;
+  });
+  return clockTicks;
+}
+
+/**
+ * When a process started, as an ISO string, or null if unknown.
+ * Linux: /proc/<pid>/stat field 22 (ticks since boot) plus btime from /proc/stat.
+ * macOS: `ps -o lstart=`. Windows: not implemented.
+ */
+export async function processStartTime(pid: number | null): Promise<string | null> {
+  if (pid === null) return null;
+  try {
+    if (process.platform === "linux") {
+      const [stat, procStat, ticks] = await Promise.all([
+        readFile(`/proc/${pid}/stat`, "utf8"),
+        readFile("/proc/stat", "utf8"),
+        linuxClockTicks(),
+      ]);
+      // The command name (field 2) may contain spaces or parens; fields after
+      // the last ")" start at field 3, so field 22 is index 19.
+      const fields = stat.slice(stat.lastIndexOf(")") + 2).trim().split(/\s+/);
+      const startTicks = Number(fields[19]);
+      const btime = Number(procStat.match(/^btime\s+(\d+)/m)?.[1]);
+      if (!Number.isFinite(startTicks) || !Number.isFinite(btime)) return null;
+      return new Date((btime + startTicks / ticks) * 1000).toISOString();
+    }
+    if (process.platform === "darwin") {
+      // LC_ALL=C keeps the format parseable: "Thu Nov 12 10:58:46 2026" (local time).
+      const { stdout, code } = await runWithStatus("ps", ["-o", "lstart=", "-p", String(pid)], {
+        env: { ...process.env, LC_ALL: "C" },
+      });
+      if (code !== 0) return null;
+      const ms = Date.parse(stdout.trim().replace(/\s+/g, " "));
+      return Number.isNaN(ms) ? null : new Date(ms).toISOString();
+    }
+  } catch {
+    // process gone or unreadable
+  }
+  return null;
+}
+
 export async function checkOwnership(
   pid: number | null,
   projectRoot: string | undefined
@@ -304,13 +354,17 @@ export async function getRunningServices(
       missing.push(port);
       continue;
     }
-    const ownership = await checkOwnership(listener.pid, projectRoot);
+    const [ownership, startedAt] = await Promise.all([
+      checkOwnership(listener.pid, projectRoot),
+      processStartTime(listener.pid),
+    ]);
     running.push({
       port,
       pid: listener.pid,
       name: listener.name,
       process_cwd: ownership.cwd,
       owned_by_project: ownership.owned,
+      started_at: startedAt,
     });
   }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getRunningServices, settleDefaultPorts, type Lookup } from "../src/tools/processes.js";
+import { getRunningServices, processStartTime, settleDefaultPorts, type Lookup } from "../src/tools/processes.js";
 import { makeProject, startListener } from "./helpers.js";
 
 const canCheckOwnership = process.platform === "linux" || process.platform === "darwin";
@@ -88,9 +88,29 @@ describe("getRunningServices per-port fallback (unchecked_ports)", () => {
   });
 });
 
+describe("processStartTime", () => {
+  it.skipIf(!canCheckOwnership)(
+    "reads when a process started (Linux /proc stat, macOS ps lstart)",
+    async () => {
+      const started = await processStartTime(process.pid);
+      expect(started).not.toBeNull();
+      const expected = Date.now() - process.uptime() * 1000;
+      expect(Math.abs(Date.parse(started!) - expected)).toBeLessThan(5000);
+    }
+  );
+
+  it.skipIf(canCheckOwnership)("returns null on Windows (start time not implemented there)", async () => {
+    expect(await processStartTime(process.pid)).toBeNull();
+  });
+
+  it("returns null for a null pid", async () => {
+    expect(await processStartTime(null)).toBeNull();
+  });
+});
+
 describe("settleDefaultPorts", () => {
   const base = {
-    running: [{ port: 3000, pid: 1, name: "node", process_cwd: null, owned_by_project: true }],
+    running: [{ port: 3000, pid: 1, name: "node", process_cwd: null, owned_by_project: true, started_at: null }],
     expected_but_missing: [8080],
     unchecked_ports: [],
     detection_available: true,

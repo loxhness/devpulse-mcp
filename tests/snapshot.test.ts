@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { createServer, type Server } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
+import { getRunningServices } from "../src/tools/processes.js";
 import { getGitState, getSessionSnapshot } from "../src/tools/snapshot.js";
 import { makeProject } from "./helpers.js";
 
@@ -62,19 +63,22 @@ async function holdDevPort(): Promise<number> {
 }
 
 describe("getSessionSnapshot", () => {
-  it("probes the port named in a recent EADDRINUSE even when it isn't an expected port", async () => {
+  it("probes the port named in a recent EADDRINUSE even when it isn't an expected port", async (ctx) => {
     const port = await holdDevPort();
+    // Skip where this machine can't observe the held port at all (e.g. sandboxes
+    // that hide some listeners from netstat); detection itself is covered in processes.test.ts.
+    const direct = await getRunningServices([port]);
+    if (!direct.running.some((s) => s.port === port)) ctx.skip();
     const dir = makeProject({
       "package.json": JSON.stringify({ dependencies: {} }), // expects 3000/5173/8080
       "logs/app.log": `${new Date().toISOString()} Error: listen EADDRINUSE: address already in use :::${port}
 `,
     });
     const result = await getSessionSnapshot(dir);
-    if (!result.services.detection_available) return; // nothing can check ports here
     expect(result.services.running.map((s) => s.port)).toContain(port);
     expect(result.services.expected_but_missing).not.toContain(port);
     expect(result.diagnosis.suggested_action ?? "").not.toMatch(/free now/i);
-  });
+  }, 20_000);
 
 
   it("says no project was detected for an empty directory", async () => {
