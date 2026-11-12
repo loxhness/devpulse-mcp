@@ -39,7 +39,7 @@ describe("collectLogFiles", () => {
       "node_modules/pkg/logs/ignored.log": "x",
       "logs/readme.txt": "x",
     });
-    const files = (await collectLogFiles(dir, ["logs", "log", "."])).map((f) => f.slice(-30));
+    const files = (await collectLogFiles(dir, ["logs", "log", "."])).map((f) => f.replace(/\\/g, "/"));
     expect(files.some((f) => f.endsWith("logs/app.log"))).toBe(true);
     expect(files.some((f) => f.endsWith("logs/nested/worker.log"))).toBe(true);
     expect(files.some((f) => f.endsWith("log/server.log"))).toBe(true);

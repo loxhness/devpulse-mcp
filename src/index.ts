@@ -112,8 +112,14 @@ server.setNotificationHandler(RootsListChangedNotificationSchema, async () => {
   cachedRoot = undefined;
 });
 
+/**
+ * Order: explicit `cwd` argument, the client's workspace root (MCP roots),
+ * DEVPULSE_PROJECT_DIR (set by the Claude Desktop extension or by hand),
+ * then the directory the server was launched from.
+ */
 async function resolveCwd(cwd: string | undefined): Promise<string> {
-  const base = (await clientRoot()) ?? process.cwd();
+  const envDir = process.env.DEVPULSE_PROJECT_DIR?.trim() || null;
+  const base = (await clientRoot()) ?? envDir ?? process.cwd();
   if (!cwd) return base;
   return isAbsolute(cwd) ? resolve(cwd) : resolve(base, cwd);
 }
