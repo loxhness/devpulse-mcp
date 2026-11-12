@@ -3,7 +3,7 @@ import path from "node:path";
 import { simpleGit } from "simple-git";
 import { detectFramework, type FrameworkInfo } from "../detectors/frameworks.js";
 import { detectRuntimes, versionMismatch, type RuntimeInfo } from "../detectors/runtimes.js";
-import { diagnose, type DiagnosisResult } from "../diagnosis/engine.js";
+import { diagnose, portsFromAddrInUse, type DiagnosisResult } from "../diagnosis/engine.js";
 import { relativeTime, getRecentErrors, type ErrorEntry } from "./errors.js";
 import {
   getRunningServices,
@@ -159,43 +159,73 @@ function runtimeIssues(framework: FrameworkInfo, runtimes: RuntimeInfo): string[
   return issues;
 }
 
+async function probePorts(
+  root: string,
+  expected: number[],
+  recentErrors: ErrorEntry[]
+): Promise<ProcessResult> {
+  const logPorts = portsFromAddrInUse(recentErrors.map((e) => e.message));
+  const ports = [...new Set([...expected, ...logPorts])];
+  try {
+    return await getRunningServices(ports, root);
+  } catch {
+    return {
+      running: [],
+      expected_but_missing: [],
+      unchecked_ports: ports,
+      detection_available: false,
+      detection_method: null,
+    };
+  }
+}
+
 export async function getSessionSnapshot(cwd: string): Promise<SessionSnapshot> {
   const root = path.resolve(cwd);
   const framework = await detectFramework(root);
 
-  const emptyServices: ProcessResult = {
-    running: [],
-    expected_but_missing: [],
-    unchecked_ports: [],
-    detection_available: true,
-    detection_method: null,
-  };
+  const expected = framework.expectedPorts;
+  const errorsPromise = getRecentErrors(root, framework.logPaths, 200).catch(() => ({
+    errors: [] as ErrorEntry[],
+    log_files: [] as string[],
+  }));
+  // Old log lines shouldn't decide today's verdict; they're still listed below.
+  const recentOf = (entries: ErrorEntry[]) =>
+    entries.filter((e) => Date.now() - Date.parse(e.at) <= DIAGNOSIS_WINDOW_MS);
 
-  const [runtimes, services, errors, git, depsMissing] = await Promise.all([
+  const [runtimes, probe, errors, git, depsMissing] = await Promise.all([
     detectRuntimes(root),
-    getRunningServices(framework.expectedPorts, root)
-      .then((result) => settleDefaultPorts(result, framework.portSource))
-      .catch(() => ({
-        ...emptyServices,
-        unchecked_ports: framework.expectedPorts,
-        detection_available: false,
-      })),
-    getRecentErrors(root, framework.logPaths, 200).catch(() => ({ errors: [], log_files: [] })),
+    // Probe the expected ports plus any port a recent EADDRINUSE names, so a
+    // conflict on a non-default port can be confirmed (or the port shown free).
+    errorsPromise.then((result) => probePorts(root, expected, recentOf(result.errors))),
+    errorsPromise,
     getGitState(root).catch(() => null),
     framework.language === "node" ? nodeDependenciesMissing(root) : Promise.resolve(false),
   ]);
+
+  // Expected-port view (what "missing" means), settled for framework defaults.
+  const services = settleDefaultPorts(
+    {
+      ...probe,
+      running: probe.running.filter((s) => expected.includes(s.port)),
+      expected_but_missing: probe.expected_but_missing.filter((p) => expected.includes(p)),
+      unchecked_ports: probe.unchecked_ports.filter((p) => expected.includes(p)),
+    },
+    framework.portSource
+  );
 
   const diagnosis = diagnose({
     cwd: root,
     projectDetected: framework.projectDetected,
     framework: framework.framework,
     portSource: framework.portSource,
-    running: services.running,
+    // All listeners, including holders of EADDRINUSE ports outside the expected set.
+    running: probe.running,
+    expectedPorts: expected,
     expected_but_missing: services.expected_but_missing,
+    freePorts: probe.expected_but_missing,
     uncheckedPorts: services.unchecked_ports,
-    detectionAvailable: services.detection_available,
-    // Old log lines shouldn't decide today's verdict; they're still listed below.
-    recentErrors: errors.errors.filter((e) => Date.now() - Date.parse(e.at) <= DIAGNOSIS_WINDOW_MS),
+    detectionAvailable: probe.detection_available,
+    recentErrors: recentOf(errors.errors),
     conflictedFiles: git?.conflicted_files ?? 0,
     gitOperation: git?.operation ?? null,
     dependenciesMissing: depsMissing
@@ -214,7 +244,8 @@ export async function getSessionSnapshot(cwd: string): Promise<SessionSnapshot> 
       git,
     },
     services: {
-      running: services.running,
+      // Includes holders of ports named in recent EADDRINUSE lines.
+      running: probe.running,
       expected_but_missing: services.expected_but_missing,
       unchecked_ports: services.unchecked_ports,
       expected_ports: framework.expectedPorts,

@@ -18,6 +18,14 @@ export interface DiagnosisInput {
   expected_but_missing: number[];
   /** Ports no lookup method could check; never described as free. */
   uncheckedPorts?: number[];
+  /** Every port that was probed and found free, including ports named in EADDRINUSE lines. */
+  freePorts?: number[];
+  /**
+   * The project's dev server ports. When given, only listeners on these ports
+   * count as the dev server; others (e.g. a port named in an EADDRINUSE line)
+   * are evidence for conflicts only. Defaults to every running service.
+   */
+  expectedPorts?: number[];
   detectionAvailable?: boolean;
   recentErrors: Array<{ level: string; message: string }>;
   conflictedFiles?: number;
@@ -101,8 +109,11 @@ function core(input: DiagnosisInput): DiagnosisResult {
     };
   }
 
-  const up = running.filter((s) => s.owned_by_project !== false);
-  const foreign = running.filter((s) => s.owned_by_project === false);
+  const onExpected = input.expectedPorts
+    ? running.filter((s) => input.expectedPorts!.includes(s.port))
+    : running;
+  const up = onExpected.filter((s) => s.owned_by_project !== false);
+  const foreign = onExpected.filter((s) => s.owned_by_project === false);
   const addrInUseLogged = errors.some((e) => ADDR_IN_USE_RE.test(e.message));
   const loggedPorts = portsFromAddrInUse(errors.map((e) => e.message));
 
@@ -120,16 +131,22 @@ function core(input: DiagnosisInput): DiagnosisResult {
     };
   }
   if (addrInUseLogged && up.length === 0 && detectionAvailable) {
-    const ports = loggedPorts.length > 0 ? loggedPorts.join(", ") : "its port";
+    const ports = loggedPorts.length > 0 ? `port ${loggedPorts.join(", ")}` : "its port";
+    // Only call a port free if it was actually probed and found free.
+    const freePorts = input.freePorts ?? missing;
+    const allFree = loggedPorts.length > 0 && loggedPorts.every((port) => freePorts.includes(port));
     return {
       health: "broken",
       primary_issue: `Dev server failed to start: ${ports} was already in use`,
       secondary_signals: [
         ...(missing.length > 0 ? [`Nothing is listening on ${missing.join(", ")} now`] : []),
+        ...uncheckedSignals,
         ...topErrors(errors),
       ],
-      suggested_action: "The port appears free now; restart the dev server",
-      confidence: "medium",
+      suggested_action: allFree
+        ? `Port ${loggedPorts.join(", ")} appears free now; restart the dev server`
+        : `Find what is using ${ports} (it could not be confirmed free), stop it or change the port, then restart the dev server`,
+      confidence: allFree ? "medium" : "low",
     };
   }
 

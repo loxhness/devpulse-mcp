@@ -55,6 +55,28 @@ describe("diagnose", () => {
     expect(result.suggested_action).toContain("restart");
   });
 
+  it("only says a port is free now when it was probed and found free", () => {
+    const on4000 = { level: "ERROR", message: "Error: listen EADDRINUSE: address already in use :::4000" };
+    const notProbed = diagnose(
+      input({ expected_but_missing: [3000], freePorts: [3000], recentErrors: [on4000] })
+    );
+    expect(notProbed.health).toBe("broken");
+    expect(JSON.stringify(notProbed)).not.toMatch(/free now/i);
+
+    const probedFree = diagnose(
+      input({ expected_but_missing: [3000], freePorts: [3000, 4000], recentErrors: [on4000] })
+    );
+    expect(probedFree.suggested_action).toMatch(/4000 appears free now/);
+  });
+
+  it("EADDRINUSE without a port number never claims the port is free", () => {
+    const result = diagnose(
+      input({ expected_but_missing: [3000], recentErrors: [{ level: "ERROR", message: "OSError: [Errno 98] Address already in use" }] })
+    );
+    expect(result.health).toBe("broken");
+    expect(JSON.stringify(result)).not.toMatch(/free now/i);
+  });
+
   it("stale EADDRINUSE while our own server is up is not a conflict", () => {
     const result = diagnose(input({ running: [own], recentErrors: [addrInUse] }));
     expect(result.health).toBe("degraded");
